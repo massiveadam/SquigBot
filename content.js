@@ -403,15 +403,18 @@ class SquigAnalyzer {
             if (script.textContent.includes('frequency') || 
                 script.textContent.includes('Plotly') || 
                 script.textContent.includes('data') ||
-                script.textContent.includes('graph')) {
+                script.textContent.includes('graph') ||
+                script.textContent.includes('chart') ||
+                script.textContent.includes('series')) {
                 this.extractInlineData(script.textContent);
             }
         });
         
-        // Method 2: Look for Plotly graph divs
-        const plotlyDivs = document.querySelectorAll('div[id*="plotly"], div[class*="plotly"], div[id*="graph"], div[class*="graph"]');
+        // Method 2: Look for Plotly graph divs and SVG graphs
+        const plotlyDivs = document.querySelectorAll('div[id*="plotly"], div[class*="plotly"], div[id*="graph"], div[class*="graph"], div[id*="chart"], div[class*="chart"]');
         plotlyDivs.forEach(div => {
-            console.log("Found potential Plotly div:", div.id || div.className);
+            console.log("Found potential graph div:", div.id || div.className);
+            
             // Try to extract data from the Plotly object if it exists
             if (window.Plotly && window.Plotly.d3) {
                 try {
@@ -424,23 +427,558 @@ class SquigAnalyzer {
                     console.log("Error accessing Plotly data:", err);
                 }
             }
+            
+            // Check for SVG paths that might represent graph lines
+            const svgPaths = div.querySelectorAll('svg path');
+            if (svgPaths.length > 0) {
+                console.log(`Found ${svgPaths.length} SVG paths in div, attempting to extract data`);
+                this.extractSVGPathData(svgPaths, div);
+            }
         });
         
         // Method 3: Check for global data objects
-        if (window.graphData || window.plotData || window.measurements || window.headphones) {
-            const dataSource = window.graphData || window.plotData || window.measurements || window.headphones;
-            console.log("Found global data object:", dataSource);
-            this.extractGlobalData(dataSource);
+        const potentialDataObjects = [
+            'graphData', 'plotData', 'measurements', 'headphones', 
+            'chartData', 'audioData', 'frequencyData', 'responseData',
+            'series', 'traces', 'curves', 'models', 'products'
+        ];
+        
+        for (const objName of potentialDataObjects) {
+            if (window[objName]) {
+                console.log(`Found global data object: ${objName}`);
+                this.extractGlobalData(window[objName]);
+            }
         }
         
         // Method 4: Look for data in window object
         for (const key in window) {
-            if (key.includes('data') || key.includes('graph') || key.includes('measurement') || key.includes('headphone')) {
+            if (key.includes('data') || 
+                key.includes('graph') || 
+                key.includes('measurement') || 
+                key.includes('headphone') ||
+                key.includes('chart') ||
+                key.includes('audio') ||
+                key.includes('frequency') ||
+                key.includes('response') ||
+                key.includes('series') ||
+                key.includes('model')) {
                 if (Array.isArray(window[key]) || typeof window[key] === 'object') {
                     console.log("Found potential data in window object:", key);
                     this.extractGlobalData(window[key]);
                 }
             }
+        }
+        
+        // Method 5: Check for Canvas elements (might be used for charts)
+        const canvasElements = document.querySelectorAll('canvas');
+        if (canvasElements.length > 0) {
+            console.log(`Found ${canvasElements.length} canvas elements, checking for chart data`);
+            this.checkForCanvasCharts(canvasElements);
+        }
+        
+        // Method 6: Look for listener.squig.link specific data structure
+        if (window.location.hostname.includes('listener.squig')) {
+            console.log("Detected listener.squig.link, looking for specific data structure");
+            this.extractListenerSquigData();
+        }
+        
+        // Method 7: Look for SVG elements directly (not just in graph divs)
+        const svgElements = document.querySelectorAll('svg');
+        svgElements.forEach(svg => {
+            const paths = svg.querySelectorAll('path');
+            if (paths.length > 0) {
+                console.log(`Found SVG with ${paths.length} paths, attempting to extract data`);
+                this.extractSVGPathData(paths, svg);
+            }
+        });
+    }
+    
+    extractListenerSquigData() {
+        try {
+            console.log("Attempting to extract data from listener.squig.link");
+            
+            // Check for visible headphones/models in the UI
+            const modelElements = document.querySelectorAll('.model, .headphone, [class*="model"], [class*="headphone"]');
+            console.log(`Found ${modelElements.length} potential model elements`);
+            
+            if (modelElements.length > 0) {
+                modelElements.forEach((element, index) => {
+                    // Try to get the name from the element
+                    const name = element.textContent.trim() || `Model ${index + 1}`;
+                    
+                    // Create a synthetic measurement for each visible model
+                    // We'll use the visible SVG path data if possible
+                    const associatedGraph = this.findAssociatedGraph(element);
+                    if (associatedGraph) {
+                        console.log(`Found associated graph for model: ${name}`);
+                        const paths = associatedGraph.querySelectorAll('path');
+                        if (paths.length > 0) {
+                            this.extractSVGPathData(paths, associatedGraph, name);
+                        }
+                    } else {
+                        // If we can't find a graph, create a placeholder measurement
+                        // This ensures the model shows up in the list even if we can't extract its data
+                        const measurement = {
+                            url: `model-${index}`,
+                            name: name,
+                            frequencies: this.generateDefaultFrequencies(),
+                            amplitudes: this.generateDefaultAmplitudes(),
+                            metadata: { source: 'listener-model' }
+                        };
+                        this.measurements.set(`model-${index}`, measurement);
+                        console.log(`Created placeholder measurement for: ${name}`);
+                    }
+                });
+                
+                this.updateMeasurementCount();
+            }
+            
+            // Try to find any global state or store
+            for (const key in window) {
+                if (typeof window[key] === 'object' && window[key] !== null) {
+                    // Look for objects that might contain state or store
+                    if (key.includes('store') || key.includes('state') || key.includes('app') || key.includes('data')) {
+                        console.log(`Checking potential state object: ${key}`);
+                        this.extractNestedData(window[key], key);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("Error extracting listener.squig data:", error);
+        }
+    }
+    
+    findAssociatedGraph(modelElement) {
+        // Try to find a graph element associated with this model
+        // This is a heuristic approach - we look for graph elements near the model element
+        
+        // First check if the model element is inside a container that also has a graph
+        let parent = modelElement.parentElement;
+        for (let i = 0; i < 3 && parent; i++) { // Check up to 3 levels up
+            const graphs = parent.querySelectorAll('svg, canvas, [id*="graph"], [class*="graph"], [id*="chart"], [class*="chart"]');
+            if (graphs.length > 0) {
+                return graphs[0];
+            }
+            parent = parent.parentElement;
+        }
+        
+        // If not found, look for graphs that appear after this element in the DOM
+        const allGraphs = document.querySelectorAll('svg, canvas, [id*="graph"], [class*="graph"], [id*="chart"], [class*="chart"]');
+        return allGraphs.length > 0 ? allGraphs[0] : null;
+    }
+    
+    extractNestedData(obj, path = '') {
+        if (!obj || typeof obj !== 'object') return;
+        
+        // Check if this object itself has frequency response data
+        if (this.looksLikeFrequencyData(obj)) {
+            console.log(`Found potential frequency data at path: ${path}`);
+            this.extractGlobalData(obj);
+            return;
+        }
+        
+        // Check for arrays of models or measurements
+        if (Array.isArray(obj) && obj.length > 0) {
+            if (obj.some(item => this.looksLikeFrequencyData(item))) {
+                console.log(`Found array of frequency data at path: ${path}`);
+                this.extractGlobalData(obj);
+                return;
+            }
+        }
+        
+        // Recursively check properties
+        for (const key in obj) {
+            if (obj[key] && typeof obj[key] === 'object') {
+                // Skip DOM nodes and circular references
+                if (obj[key] instanceof Node || key === 'parent' || key === 'parentNode') continue;
+                
+                // Skip functions and built-in objects
+                if (typeof obj[key] === 'function' || key.startsWith('__')) continue;
+                
+                try {
+                    this.extractNestedData(obj[key], `${path}.${key}`);
+                } catch (e) {
+                    // Skip any errors from circular references
+                }
+            }
+        }
+    }
+    
+    looksLikeFrequencyData(obj) {
+        if (!obj) return false;
+        
+        // Check for common frequency response data patterns
+        if (obj.frequencies && obj.amplitudes) return true;
+        if (obj.freq && obj.amp) return true;
+        if (obj.x && obj.y) return true;
+        if (obj.data && Array.isArray(obj.data)) return true;
+        
+        // Check if it's a headphone/model object with frequency data
+        if (obj.name || obj.model || obj.title) {
+            if (obj.frequency || obj.response || obj.measurements || obj.data) return true;
+        }
+        
+        return false;
+    }
+    
+    generateDefaultFrequencies() {
+        // Generate a standard set of frequencies from 20Hz to 20kHz
+        const frequencies = [];
+        for (let freq = 20; freq <= 20000; freq = Math.round(freq * 1.1)) {
+            frequencies.push(freq);
+        }
+        return frequencies;
+    }
+    
+    generateDefaultAmplitudes() {
+        // Generate flat response amplitudes (all zeros)
+        const frequencies = this.generateDefaultFrequencies();
+        return Array(frequencies.length).fill(0);
+    }
+    
+    extractSVGPathData(paths, container, modelName = null) {
+        try {
+            // Extract data from SVG paths - these often represent frequency response curves
+            paths.forEach((path, index) => {
+                // Try to determine if this path is a frequency response curve
+                // (vs. a decorative element, axis, etc.)
+                const isLikelyGraph = this.isLikelyGraphPath(path);
+                
+                if (isLikelyGraph) {
+                    // Get the path data
+                    const pathData = path.getAttribute('d');
+                    if (!pathData) return;
+                    
+                    // Try to extract the name from various sources
+                    let name = modelName;
+                    if (!name) {
+                        // Try to get name from path attributes
+                        name = path.getAttribute('data-name') || 
+                               path.getAttribute('aria-label') || 
+                               path.getAttribute('id') || 
+                               path.getAttribute('class');
+                        
+                        // If still no name, try to get it from container
+                        if (!name && container) {
+                            name = container.getAttribute('data-name') || 
+                                   container.getAttribute('aria-label') || 
+                                   container.getAttribute('id') || 
+                                   container.getAttribute('class');
+                        }
+                        
+                        // If still no name, use a generic one
+                        if (!name) {
+                            name = `Graph Path ${index + 1}`;
+                        }
+                    }
+                    
+                    // Convert SVG path to frequency/amplitude points
+                    const points = this.pathToPoints(pathData);
+                    if (points.length > 10) { // Only use if we have enough points
+                        const measurement = {
+                            url: `svg-path-${index}`,
+                            name: name,
+                            frequencies: points.map(p => p.x),
+                            amplitudes: points.map(p => p.y),
+                            metadata: { source: 'svg-path' }
+                        };
+                        
+                        this.measurements.set(`svg-path-${index}`, measurement);
+                        console.log(`Extracted SVG path data for: ${name}, ${points.length} points`);
+                    }
+                }
+            });
+            
+            this.updateMeasurementCount();
+        } catch (error) {
+            console.error("Error extracting SVG path data:", error);
+        }
+    }
+    
+    isLikelyGraphPath(path) {
+        // Heuristics to determine if a path is likely a graph line
+        // (vs. decorative elements, axes, etc.)
+        
+        // Check the path's style
+        const stroke = path.getAttribute('stroke') || 
+                      window.getComputedStyle(path).stroke || 
+                      '';
+        const fill = path.getAttribute('fill') || 
+                    window.getComputedStyle(path).fill || 
+                    '';
+        const strokeWidth = parseFloat(path.getAttribute('stroke-width') || 
+                           window.getComputedStyle(path).strokeWidth || 
+                           '0');
+        
+        // Graph lines typically have a stroke but no fill
+        if (stroke && stroke !== 'none' && (fill === 'none' || fill === '')) {
+            return true;
+        }
+        
+        // Graph lines typically have a reasonable stroke width
+        if (strokeWidth > 0 && strokeWidth < 5) {
+            return true;
+        }
+        
+        // Check the path data itself
+        const d = path.getAttribute('d') || '';
+        
+        // Graph lines typically have many commands and are complex
+        if (d.length > 100 && (d.match(/[ML]/g) || []).length > 10) {
+            return true;
+        }
+        
+        // Graph lines often don't have closed paths
+        if (!d.includes('Z') && !d.includes('z')) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    pathToPoints(pathData) {
+        // Convert SVG path data to points
+        const points = [];
+        
+        // Simple parser for M and L commands
+        const commands = pathData.match(/[ML][\d\.\-\s,]+/g) || [];
+        
+        commands.forEach(cmd => {
+            const type = cmd[0]; // M or L
+            const coords = cmd.substring(1).trim().split(/[\s,]+/);
+            
+            for (let i = 0; i < coords.length; i += 2) {
+                if (i + 1 < coords.length) {
+                    const x = parseFloat(coords[i]);
+                    const y = parseFloat(coords[i + 1]);
+                    
+                    if (!isNaN(x) && !isNaN(y)) {
+                        points.push({ x, y });
+                    }
+                }
+            }
+        });
+        
+        // Convert SVG coordinates to frequency/amplitude
+        // This is a heuristic approach - we assume the x-axis is frequency (log scale)
+        // and the y-axis is amplitude (linear scale)
+        if (points.length > 0) {
+            // Find the min/max values
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            
+            points.forEach(p => {
+                minX = Math.min(minX, p.x);
+                maxX = Math.max(maxX, p.x);
+                minY = Math.min(minY, p.y);
+                maxY = Math.max(maxY, p.y);
+            });
+            
+            // Convert to frequency (20Hz-20kHz) and amplitude (-20dB to +20dB)
+            const convertedPoints = points.map(p => {
+                // Normalize to 0-1 range
+                const normalizedX = (p.x - minX) / (maxX - minX);
+                // Invert Y because SVG coordinates have 0 at the top
+                const normalizedY = 1 - (p.y - minY) / (maxY - minY);
+                
+                // Convert to frequency (log scale) and amplitude
+                const freq = Math.pow(10, normalizedX * 3 + 1.3); // 20Hz to 20kHz
+                const amp = normalizedY * 40 - 20; // -20dB to +20dB
+                
+                return { x: freq, y: amp };
+            });
+            
+            // Sort by frequency
+            convertedPoints.sort((a, b) => a.x - b.x);
+            
+            return convertedPoints;
+        }
+        
+        return points;
+    }
+    
+    checkForCanvasCharts(canvasElements) {
+        // Check for common chart libraries that use canvas
+        if (window.Chart) {
+            console.log("Found Chart.js library");
+            this.extractChartJsData();
+        }
+        
+        if (window.Highcharts) {
+            console.log("Found Highcharts library");
+            this.extractHighchartsData();
+        }
+        
+        // Check for canvas elements with specific sizes (likely charts)
+        canvasElements.forEach((canvas, index) => {
+            const width = canvas.width || canvas.clientWidth;
+            const height = canvas.height || canvas.clientHeight;
+            
+            // Charts typically have a reasonable aspect ratio
+            if (width > 200 && height > 100) {
+                console.log(`Found potential chart canvas: ${width}x${height}`);
+                
+                // Try to find the chart instance associated with this canvas
+                this.findCanvasChartInstance(canvas, index);
+            }
+        });
+    }
+    
+    findCanvasChartInstance(canvas, index) {
+        // Try to find a chart instance associated with this canvas
+        for (const key in window) {
+            if (typeof window[key] === 'object' && window[key] !== null) {
+                // Check if this object has a canvas property that matches our canvas
+                if (window[key].canvas === canvas) {
+                    console.log(`Found chart instance for canvas: ${key}`);
+                    this.extractCanvasChartData(window[key], `canvas-chart-${index}`);
+                    return;
+                }
+                
+                // Check if this is a chart configuration object
+                if (window[key].type && window[key].data && window[key].options) {
+                    console.log(`Found potential chart config: ${key}`);
+                    this.extractCanvasChartData(window[key], `canvas-config-${index}`);
+                }
+            }
+        }
+    }
+    
+    extractCanvasChartData(chartInstance, id) {
+        try {
+            let datasets = [];
+            
+            // Extract data from chart instance
+            if (chartInstance.data && chartInstance.data.datasets) {
+                datasets = chartInstance.data.datasets;
+            } else if (chartInstance.datasets) {
+                datasets = chartInstance.datasets;
+            } else if (chartInstance.series) {
+                datasets = chartInstance.series;
+            }
+            
+            datasets.forEach((dataset, i) => {
+                if (dataset.data && Array.isArray(dataset.data)) {
+                    const name = dataset.label || dataset.name || `Chart Dataset ${i + 1}`;
+                    
+                    // Check if data is in {x,y} format or just y values
+                    let frequencies = [];
+                    let amplitudes = [];
+                    
+                    if (dataset.data.length > 0 && typeof dataset.data[0] === 'object') {
+                        // {x,y} format
+                        frequencies = dataset.data.map(point => point.x);
+                        amplitudes = dataset.data.map(point => point.y);
+                    } else {
+                        // Just y values, generate x values
+                        amplitudes = dataset.data;
+                        frequencies = this.generateDefaultFrequencies().slice(0, amplitudes.length);
+                    }
+                    
+                    if (frequencies.length > 0 && amplitudes.length > 0) {
+                        const measurement = {
+                            url: `${id}-${i}`,
+                            name: name,
+                            frequencies: frequencies,
+                            amplitudes: amplitudes,
+                            metadata: { source: 'canvas-chart' }
+                        };
+                        
+                        this.measurements.set(`${id}-${i}`, measurement);
+                        console.log(`Extracted canvas chart data for: ${name}`);
+                    }
+                }
+            });
+            
+            this.updateMeasurementCount();
+        } catch (error) {
+            console.error("Error extracting canvas chart data:", error);
+        }
+    }
+    
+    extractChartJsData() {
+        try {
+            // Find Chart.js instances
+            if (window.Chart.instances) {
+                Object.values(window.Chart.instances).forEach((chart, index) => {
+                    if (chart.data && chart.data.datasets) {
+                        chart.data.datasets.forEach((dataset, i) => {
+                            const name = dataset.label || `Chart ${index + 1} Dataset ${i + 1}`;
+                            
+                            // Extract data points
+                            let frequencies = [];
+                            let amplitudes = [];
+                            
+                            if (dataset.data && Array.isArray(dataset.data)) {
+                                if (dataset.data.length > 0 && typeof dataset.data[0] === 'object') {
+                                    // {x,y} format
+                                    frequencies = dataset.data.map(point => point.x);
+                                    amplitudes = dataset.data.map(point => point.y);
+                                } else {
+                                    // Just y values
+                                    amplitudes = dataset.data;
+                                    frequencies = this.generateDefaultFrequencies().slice(0, amplitudes.length);
+                                }
+                                
+                                if (frequencies.length > 0 && amplitudes.length > 0) {
+                                    const measurement = {
+                                        url: `chartjs-${index}-${i}`,
+                                        name: name,
+                                        frequencies: frequencies,
+                                        amplitudes: amplitudes,
+                                        metadata: { source: 'chartjs' }
+                                    };
+                                    
+                                    this.measurements.set(`chartjs-${index}-${i}`, measurement);
+                                    console.log(`Extracted Chart.js data for: ${name}`);
+                                }
+                            }
+                        });
+                    }
+                });
+                
+                this.updateMeasurementCount();
+            }
+        } catch (error) {
+            console.error("Error extracting Chart.js data:", error);
+        }
+    }
+    
+    extractHighchartsData() {
+        try {
+            // Find Highcharts instances
+            if (window.Highcharts.charts) {
+                window.Highcharts.charts.forEach((chart, index) => {
+                    if (chart && chart.series) {
+                        chart.series.forEach((series, i) => {
+                            const name = series.name || `Highcharts ${index + 1} Series ${i + 1}`;
+                            
+                            // Extract data points
+                            if (series.points && series.points.length > 0) {
+                                const frequencies = series.points.map(point => point.x);
+                                const amplitudes = series.points.map(point => point.y);
+                                
+                                if (frequencies.length > 0) {
+                                    const measurement = {
+                                        url: `highcharts-${index}-${i}`,
+                                        name: name,
+                                        frequencies: frequencies,
+                                        amplitudes: amplitudes,
+                                        metadata: { source: 'highcharts' }
+                                    };
+                                    
+                                    this.measurements.set(`highcharts-${index}-${i}`, measurement);
+                                    console.log(`Extracted Highcharts data for: ${name}`);
+                                }
+                            }
+                        });
+                    }
+                });
+                
+                this.updateMeasurementCount();
+            }
+        } catch (error) {
+            console.error("Error extracting Highcharts data:", error);
         }
     }
 
