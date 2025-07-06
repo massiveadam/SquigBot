@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Squig Target Analyzer",
+  "version": "1.0",
+  "description": "Analyze frequency response deviations from target curves on Squig.link sites",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "*://*.squig.link/*",
+    "*://squig.link/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://*.squig.link/*", "*://squig.link/*"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Squig Target Analyzer"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["targets/*"],
+      "matches": ["*://*.squig.link/*", "*://squig.link/*"]
+    }
+  ]
+}
