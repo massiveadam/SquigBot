@@ -24,10 +24,30 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (response && response.count !== undefined) {
                     measurementsCount.textContent = `${response.count} measurements found`;
                     if (response.count === 0) {
-                        measurementsCount.textContent += ' (try refreshing if data should be available)';
+                        measurementsCount.textContent = 'No measurements found yet. The extension is actively scanning for data.';
+                        measurementsCount.innerHTML += '<br><br><span style="color: #dc3545;">If you believe data should be available, try these steps:</span>';
+                        measurementsCount.innerHTML += '<ul style="margin-top: 5px; padding-left: 20px; text-align: left;">';
+                        measurementsCount.innerHTML += '<li>Click the "Refresh Page" button below</li>';
+                        measurementsCount.innerHTML += '<li>Wait for the page to fully load</li>';
+                        measurementsCount.innerHTML += '<li>Try scrolling down to load more content</li>';
+                        measurementsCount.innerHTML += '<li>Click on different headphones to load their data</li>';
+                        measurementsCount.innerHTML += '</ul>';
                     }
                 } else {
                     measurementsCount.textContent = 'Scanning for measurements...';
+                    
+                    // If we didn't get a response, the content script might not be fully initialized
+                    // Try again after a short delay
+                    setTimeout(() => {
+                        chrome.tabs.sendMessage(tab.id, { action: 'getMeasurementCount' }, (retryResponse) => {
+                            if (retryResponse && retryResponse.count !== undefined) {
+                                measurementsCount.textContent = `${retryResponse.count} measurements found`;
+                                if (retryResponse.count === 0) {
+                                    measurementsCount.textContent = 'Still scanning for measurements...';
+                                }
+                            }
+                        });
+                    }, 1500);
                 }
             });
         } else {
@@ -68,7 +88,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     settingsBtn.addEventListener('click', () => {
         // Open settings or show info
-        chrome.tabs.create({ url: 'https://github.com/yourusername/squig-target-analyzer' });
+        chrome.tabs.create({ url: 'https://github.com/massiveadam/SquigBot' });
         window.close();
     });
 });
