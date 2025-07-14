@@ -7,13 +7,15 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'updateBadge') {
         // Update extension badge with measurement count
+        const count = request.count || 0;
+        
         chrome.action.setBadgeText({
-            text: request.count > 0 ? request.count.toString() : '',
-            tabId: sender.tab.id
+            text: count > 0 ? count.toString() : '',
+            tabId: sender.tab?.id
         });
         
         chrome.action.setBadgeBackgroundColor({
-            color: request.count > 0 ? '#28a745' : '#dc3545'
+            color: count > 0 ? '#28a745' : '#dc3545'
         });
     }
 });
@@ -21,8 +23,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // Handle tab updates
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (changeInfo.status === 'complete' && tab.url) {
-        // Clear badge when navigating away from Squig.link
-        if (!tab.url.includes('squig.link') && !tab.url.includes('squig')) {
+        // Clear badge when navigating away from Squig sites
+        if (!isSquigSite(tab.url)) {
             chrome.action.setBadgeText({ text: '', tabId: tabId });
         }
     }
@@ -31,8 +33,22 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // Handle tab activation
 chrome.tabs.onActivated.addListener((activeInfo) => {
     chrome.tabs.get(activeInfo.tabId, (tab) => {
-        if (tab.url && !tab.url.includes('squig.link') && !tab.url.includes('squig')) {
+        if (tab.url && !isSquigSite(tab.url)) {
             chrome.action.setBadgeText({ text: '', tabId: activeInfo.tabId });
         }
     });
 });
+
+function isSquigSite(url) {
+    if (!url) return false;
+    
+    const squigPatterns = [
+        'squig.link',
+        'crinacle.com',
+        'headphones.com',
+        'graph.headphones.com',
+        'graph-lab.com'
+    ];
+    
+    return squigPatterns.some(pattern => url.includes(pattern));
+}

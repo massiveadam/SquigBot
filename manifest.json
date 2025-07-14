@@ -2,18 +2,33 @@
   "manifest_version": 3,
   "name": "Squig Target Analyzer",
   "version": "1.0",
-  "description": "Analyze frequency response deviations from target curves on Squig.link sites",
+  "description": "Analyze IEM frequency response deviations from target curves on Squig sites",
   "permissions": [
     "storage",
     "activeTab"
   ],
   "host_permissions": [
     "*://*.squig.link/*",
-    "*://squig.link/*"
+    "*://squig.link/*",
+    "*://*.crinacle.com/*",
+    "*://crinacle.com/*",
+    "*://*.headphones.com/*",
+    "*://headphones.com/*",
+    "*://*.graph-lab.com/*",
+    "*://graph-lab.com/*"
   ],
   "content_scripts": [
     {
-      "matches": ["*://*.squig.link/*", "*://squig.link/*"],
+      "matches": [
+        "*://*.squig.link/*", 
+        "*://squig.link/*",
+        "*://*.crinacle.com/*",
+        "*://crinacle.com/*",
+        "*://*.headphones.com/*",
+        "*://headphones.com/*",
+        "*://*.graph-lab.com/*",
+        "*://graph-lab.com/*"
+      ],
       "js": ["content.js"],
       "css": ["content.css"]
     }
@@ -24,11 +39,5 @@
   },
   "background": {
     "service_worker": "background.js"
-  },
-  "web_accessible_resources": [
-    {
-      "resources": ["targets/*"],
-      "matches": ["*://*.squig.link/*", "*://squig.link/*"]
-    }
-  ]
+  }
 }
